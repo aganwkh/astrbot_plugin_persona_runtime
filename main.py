@@ -55,7 +55,7 @@ class Main(Star):
         self.prompt_composer = PromptComposer(static_persona_prompt=config.get("static_persona_prompt", ""))
         self.runtime_guard = RuntimeInjectionGuard()
         self.fallback = FallbackController()
-        self.debug_mode = bool(config.get("DEBUG_MODE", config.get("debug_log", True)))
+        self.debug_mode = bool(config.get("DEBUG_MODE", True))
         self.logger = ObservabilityLogger(enabled=self.debug_mode)
         commit_timeout_seconds = int(config.get("commit_timeout_seconds", 15))
         self.turn_registry = TurnRegistry(default_timeout_seconds=commit_timeout_seconds)
