@@ -1,0 +1,19 @@
+name: astrbot_plugin_persona_runtime
+display_name: 人格运行层
+author: OpenAI
+version: 0.3.2
+description: V3.2-aligned runtime persona strategy layer starter for AstrBot.
+repo: https://github.com/aganwkh/astrbot_plugin_persona_runtime
+astrbot_version: ">=4.23.1,<5"
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+  - discord
+  - wecom
+  - lark
+  - dingtalk
+  - slack
+  - kook
+  - vocechat
+  - satori

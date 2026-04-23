@@ -1,0 +1,47 @@
+{
+  "enable_runtime": {
+    "description": "是否启用人格运行层主逻辑",
+    "type": "bool",
+    "default": true
+  },
+  "debug_log": {
+    "description": "是否输出结构化调试日志",
+    "type": "bool",
+    "default": true
+  },
+  "commit_timeout_seconds": {
+    "description": "候选态等待 after_message_sent 的超时时间（秒）",
+    "type": "int",
+    "default": 15
+  },
+  "max_runtime_chars": {
+    "description": "单轮动态注入文本最大字符数",
+    "type": "int",
+    "default": 800
+  },
+  "max_lore_chars": {
+    "description": "单轮 lore 注入最大字符数",
+    "type": "int",
+    "default": 300
+  },
+  "lore_top_k": {
+    "description": "单轮最多注入的 lore 条数",
+    "type": "int",
+    "default": 2
+  },
+  "lore_score_threshold": {
+    "description": "lore 命中阈值（0-1）",
+    "type": "float",
+    "default": 0.55
+  },
+  "plugin_priority": {
+    "description": "事件钩子优先级",
+    "type": "int",
+    "default": 0
+  },
+  "static_persona_prompt": {
+    "description": "作为底盘拼接的静态人格提示词，可粘贴精简版 system_prompt",
+    "type": "text",
+    "default": ""
+  }
+}
