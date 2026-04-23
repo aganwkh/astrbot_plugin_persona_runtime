@@ -55,7 +55,8 @@ class Main(Star):
         self.prompt_composer = PromptComposer(static_persona_prompt=config.get("static_persona_prompt", ""))
         self.runtime_guard = RuntimeInjectionGuard()
         self.fallback = FallbackController()
-        self.logger = ObservabilityLogger(enabled=bool(config.get("debug_log", True)))
+        self.debug_mode = bool(config.get("DEBUG_MODE", config.get("debug_log", True)))
+        self.logger = ObservabilityLogger(enabled=self.debug_mode)
         commit_timeout_seconds = int(config.get("commit_timeout_seconds", 15))
         self.turn_registry = TurnRegistry(default_timeout_seconds=commit_timeout_seconds)
         self.tool_tracker = ToolContextTracker()
@@ -81,6 +82,74 @@ class Main(Star):
         await self.commit_watchdog.stop()
         await self.repository.close()
         self.logger.info("plugin_terminate", message="persona_runtime terminated")
+
+    def _tool_flags(self, turn_id: str | None) -> dict[str, Any]:
+        trace = self.tool_tracker.get(turn_id) if turn_id else None
+        if trace:
+            return trace.to_log_dict()
+        return {
+            "agent_active": False,
+            "tool_called": False,
+            "tool_name": "",
+            "tool_success": None,
+            "tool_result_empty": None,
+            "tool_error_flag": False,
+            "tool_call_count": 0,
+            "tool_result_count": 0,
+            "tool_error_count": 0,
+        }
+
+    def _debug_turn(
+        self,
+        debug_event: str,
+        *,
+        turn_id: str | None = None,
+        turn: Any = None,
+        bypass_reason: str = "",
+        streaming_flag: bool | None = None,
+        selected_policy: dict[str, Any] | None = None,
+        selected_lore_ids: list[str] | None = None,
+        tool_flags: dict[str, Any] | None = None,
+        commit_stage: str | None = None,
+        final_committed: bool | None = None,
+        user_state_version: int | None = None,
+        session_state_version: int | None = None,
+    ):
+        if not self.debug_mode:
+            return
+        if turn is None and turn_id:
+            turn = self.turn_registry.get(turn_id)
+        if turn_id is None and turn is not None:
+            turn_id = turn.turn_id
+
+        bundle = getattr(turn, "bundle", None) if turn is not None else None
+        if selected_policy is None and bundle is not None:
+            selected_policy = bundle.policy.to_log_dict()
+        if selected_lore_ids is None and bundle is not None:
+            selected_lore_ids = bundle.selected_lore_ids
+        if streaming_flag is None and bundle is not None:
+            streaming_flag = bool(bundle.normalized_input.is_streaming)
+        if commit_stage is None and turn is not None:
+            commit_stage = turn.commit_stage
+        if final_committed is None and turn is not None:
+            final_committed = turn.final_committed
+
+        self.logger.info(
+            "debug_turn",
+            debug_event=debug_event,
+            turn_id=turn_id or "",
+            user_scope_key=getattr(turn, "user_scope_key", ""),
+            session_scope_key=getattr(turn, "session_scope_key", ""),
+            bypass_reason=bypass_reason,
+            streaming_flag=bool(streaming_flag),
+            selected_policy=selected_policy or {},
+            selected_lore_ids=selected_lore_ids or [],
+            tool_flags=tool_flags if tool_flags is not None else self._tool_flags(turn_id),
+            commit_stage=commit_stage or "none",
+            final_committed=bool(final_committed),
+            user_state_version=user_state_version,
+            session_state_version=session_state_version,
+        )
 
     @filter.command("prhello")
     async def prhello(self, event: AstrMessageEvent):
@@ -116,15 +185,25 @@ class Main(Star):
         normalized = self.input_normalizer.normalize(event)
         if not self.eligibility_checker.is_eligible(normalized):
             self.logger.info("skip_ineligible", raw_text=normalized.raw_text)
+            self._debug_turn("skip_ineligible", bypass_reason="ineligible", streaming_flag=normalized.is_streaming)
             return
 
         bypass = self.bypass_router.decide(normalized)
         if bypass.bypass:
             self.logger.info("bypass_runtime", reason=bypass.reason, raw_text=normalized.raw_text)
+            self._debug_turn("bypass_runtime", bypass_reason=bypass.reason, streaming_flag=normalized.is_streaming)
             return
 
         scope = self.scope_resolver.resolve(event)
         turn = self.turn_registry.create_turn(scope.user_scope_key, scope.session_scope_key)
+        self.logger.info(
+            "turn_created",
+            turn_id=turn.turn_id,
+            user_scope_key=scope.user_scope_key,
+            session_scope_key=scope.session_scope_key,
+            streaming_flag=normalized.is_streaming,
+        )
+        self._debug_turn("turn_created", turn=turn, streaming_flag=normalized.is_streaming)
 
         try:
             async with self.scope_locks.guard(scope.user_scope_key, scope.session_scope_key):
@@ -172,6 +251,18 @@ class Main(Star):
                 selected_lore_ids=[item.lore_id for item in lore_items],
                 injected_len=len(runtime_text),
                 pre_turn_written=turn.pre_turn_written,
+                streaming_flag=normalized.is_streaming,
+                user_state_version=user_state.state_version,
+                session_state_version=session_state.state_version,
+            )
+            self._debug_turn(
+                "runtime_injected",
+                turn=turn,
+                streaming_flag=normalized.is_streaming,
+                selected_policy=policy.to_log_dict(),
+                selected_lore_ids=[item.lore_id for item in lore_items],
+                user_state_version=user_state.state_version,
+                session_state_version=session_state.state_version,
             )
         except Exception as exc:  # noqa: BLE001
             decision = self.fallback.handle(exc, stage="on_llm_request", logger=self.logger)
@@ -186,6 +277,7 @@ class Main(Star):
             return
         self.tool_tracker.on_agent_begin(turn_id)
         self.logger.info("agent_begin", turn_id=turn_id)
+        self._debug_turn("tool_entered", turn_id=turn_id)
 
     @filter.on_using_llm_tool()
     async def on_using_llm_tool(self, event: AstrMessageEvent, tool: Any, tool_args: dict | None):
@@ -194,6 +286,7 @@ class Main(Star):
             return
         self.tool_tracker.on_tool_begin(turn_id, getattr(tool, "name", "unknown"), tool_args or {})
         self.logger.info("tool_begin", turn_id=turn_id, tool_name=getattr(tool, "name", "unknown"), tool_args=tool_args or {})
+        self._debug_turn("tool_begin", turn_id=turn_id)
 
     @filter.on_llm_tool_respond()
     async def on_llm_tool_respond(self, event: AstrMessageEvent, tool: Any, tool_args: dict | None, tool_result: Any):
@@ -208,6 +301,7 @@ class Main(Star):
             tool_name=getattr(tool, "name", "unknown"),
             tool_trace=trace.to_log_dict() if trace else None,
         )
+        self._debug_turn("tool_result", turn_id=turn_id)
 
     @filter.on_llm_response()
     async def on_llm_response(self, event: AstrMessageEvent, resp: LLMResponse):
@@ -216,6 +310,7 @@ class Main(Star):
             return
         self.turn_registry.mark_candidate(turn_id, stage="on_llm_response")
         self.logger.info("candidate_commit", turn_id=turn_id, commit_stage="on_llm_response")
+        self._debug_turn("candidate_write", turn_id=turn_id, commit_stage="on_llm_response")
 
     @filter.on_agent_done()
     async def on_agent_done(self, event: AstrMessageEvent, run_context: Any, resp: LLMResponse):
@@ -224,6 +319,7 @@ class Main(Star):
             return
         self.turn_registry.mark_candidate(turn_id, stage="on_agent_done")
         self.logger.info("candidate_commit", turn_id=turn_id, commit_stage="on_agent_done")
+        self._debug_turn("candidate_write", turn_id=turn_id, commit_stage="on_agent_done")
 
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent):
@@ -272,6 +368,17 @@ class Main(Star):
             commit_stage="after_message_sent",
             final_committed=True,
             tool_trace=trace.to_log_dict() if trace else None,
+            user_state_version=user_state.state_version,
+            session_state_version=session_state.state_version,
+        )
+        self._debug_turn(
+            "final_commit",
+            turn_id=turn_id,
+            tool_flags=trace.to_log_dict() if trace else None,
+            commit_stage="after_message_sent",
+            final_committed=True,
+            user_state_version=user_state.state_version,
+            session_state_version=session_state.state_version,
         )
 
     async def _rollback_turn(self, turn_id: str, reason: str):
@@ -305,4 +412,17 @@ class Main(Star):
             restored=restored,
             restore_skipped_reason=restore_skipped_reason,
             tool_trace=trace.to_log_dict() if trace else None,
+            commit_stage=turn.commit_stage,
+            final_committed=turn.final_committed,
+            user_state_version=getattr(turn.pre_user_state, "state_version", None),
+            session_state_version=getattr(turn.pre_session_state, "state_version", None),
+        )
+        self._debug_turn(
+            "watchdog_rollback" if reason == "commit_timeout" else "rollback",
+            turn_id=turn_id,
+            tool_flags=trace.to_log_dict() if trace else None,
+            commit_stage=turn.commit_stage,
+            final_committed=turn.final_committed,
+            user_state_version=getattr(turn.pre_user_state, "state_version", None),
+            session_state_version=getattr(turn.pre_session_state, "state_version", None),
         )

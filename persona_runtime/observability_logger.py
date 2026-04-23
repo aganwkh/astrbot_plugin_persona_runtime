@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 import traceback
 from typing import Any
 
-from astrbot.api import logger
+try:
+    from astrbot.api import logger
+except ModuleNotFoundError:
+    logger = logging.getLogger("astrbot_plugin_persona_runtime")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 class ObservabilityLogger:

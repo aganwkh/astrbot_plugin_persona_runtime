@@ -4,7 +4,7 @@
     "type": "bool",
     "default": true
   },
-  "debug_log": {
+  "DEBUG_MODE": {
     "description": "是否输出结构化调试日志",
     "type": "bool",
     "default": true
@@ -33,11 +33,6 @@
     "description": "lore 命中阈值（0-1）",
     "type": "float",
     "default": 0.55
-  },
-  "plugin_priority": {
-    "description": "事件钩子优先级",
-    "type": "int",
-    "default": 0
   },
   "static_persona_prompt": {
     "description": "作为底盘拼接的静态人格提示词，可粘贴精简版 system_prompt",
