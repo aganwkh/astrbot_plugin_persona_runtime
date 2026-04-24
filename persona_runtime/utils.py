@@ -78,3 +78,46 @@ def safe_get_conversation_id(event: Any) -> str:
             if text and text != "unknown_origin":
                 return text
     return safe_get_unified_msg_origin(event)
+
+
+def extract_response_text(resp: Any) -> str:
+    candidates = [
+        getattr(resp, "text", None),
+        getattr(resp, "response_text", None),
+        getattr(resp, "completion_text", None),
+        getattr(resp, "content", None),
+        getattr(resp, "message", None),
+    ]
+    for candidate in candidates:
+        text = _extract_text(candidate)
+        if text:
+            return text
+    return ""
+
+
+def _extract_text(candidate: Any) -> str:
+    if candidate is None:
+        return ""
+    if isinstance(candidate, str):
+        return candidate.strip()
+    if isinstance(candidate, bytes):
+        try:
+            return candidate.decode("utf-8").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+    if isinstance(candidate, list):
+        joined = "\n".join(part for item in candidate if (part := _extract_text(item)))
+        return joined.strip()
+    if isinstance(candidate, dict):
+        for key in ["text", "content", "message"]:
+            text = _extract_text(candidate.get(key))
+            if text:
+                return text
+        return ""
+    value = getattr(candidate, "text", None)
+    if value is not None:
+        return _extract_text(value)
+    value = getattr(candidate, "content", None)
+    if value is not None:
+        return _extract_text(value)
+    return ""

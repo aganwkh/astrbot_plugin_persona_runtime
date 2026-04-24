@@ -1,137 +1,150 @@
-# astrbot_plugin_persona_runtime (V3.2 starter)
+# astrbot_plugin_persona_runtime
 
-这是一个和 `PROJECT_START_V3.2` 对齐的 AstrBot 插件 starter。
+AstrBot 单角色人格运行时插件。
 
-它仍然是 **starter，不是最终成品**。当前重点是把人格运行层的工程骨架、SQLite 状态仓储、两阶段提交、turn 超时回滚、工具态关联、结构化调试日志和离线验证支架先稳定下来，方便真正上机前复现问题。
+当前仓库已经不是最早的 starter 骨架，而是一个可运行的分阶段实现版本，包含：
 
-## 当前已实现
+- 阶段 1：`scene -> behavior -> PromptPlan -> /prwhy`
+- 阶段 2：示例库、示例选择、`/prexample`、`/prexamples`
+- 阶段 3：`raw_turns`、`turn_traces`、`learning_buffer`
+- 阶段 4：批学习分析、`weight_patches`、运行时 patch 生效、`/prlearn`、`/prpatches`
+- 阶段 5：`deterministic_mode`、固定评估集、`/preval`、离线评估链路
 
-- `metadata.yaml` / `_conf_schema.json` / `requirements.txt`
-- 最小主链路：
-  - `InputNormalizer`
-  - `EligibilityChecker`
-  - `BypassRouter`
-  - `StateScopeResolver`
-  - `StateRepository(SQLite)`
-  - `ScopeLockManager`
-  - `TurnRegistry`
-  - `CommitWatchdog`
-  - `StateDecay`
-  - `StateResolver`
-  - `ToolContextTracker`
-  - `DialoguePolicy`
-  - `LoreInjector`
-  - `PromptMergePolicy`
-  - `TokenBudgetGuard`
-  - `PromptComposer`
-  - `RuntimeInjectionGuard`
-  - `FallbackController`
-  - `ObservabilityLogger`
-- 基础命令：
-  - `/prhello`
-  - `/prstate`
-  - `/prturns`
-- 离线开发支架：
-  - `dev_harness.py`
-  - `tests/`
+## 当前能力
 
-## 调试日志
+- 运行时人格注入
+  - 输入归一化、命令绕过、作用域解析
+  - 场景解析：`status_share`、`casual_chat`、`complaint`、`task_request`
+  - 行为选择：`short_ack`、`followup_question`、`comfort`、`solution`
+  - PromptPlan 驱动的 prompt 组装
+- 示例库
+  - 手动保存最近回复为示例
+  - 按场景、标签、简单文本相似度选择示例
+- 记录链
+  - `raw_turns`
+  - `turn_traces`
+  - `learning_buffer`
+- 学习链
+  - 批量分析 `learning_buffer`
+  - 生成 `behavior_weight_patch`
+  - 生成 `example_tag_weight_patch`
+  - patch 在行为概率和示例选择阶段生效
+- 稳定性
+  - `after_message_sent` 最终提交
+  - watchdog 超时回滚
+  - `deterministic_mode`
+  - 固定评估集和离线 harness
 
-`DEBUG_MODE` 默认开启。开启后会输出结构化 JSON 日志，关键 turn 事件会带上这些字段：
+## 命令
 
-- `turn_id`
-- `user_scope_key`
-- `session_scope_key`
-- `bypass_reason`
-- `streaming_flag`
-- `selected_policy`
-- `selected_lore_ids`
-- `tool_flags`
-- `commit_stage`
-- `final_committed`
-- `user_state_version`
-- `session_state_version`
+- `/prhello`
+  - 插件连通性检查
+- `/prstate`
+  - 查看当前 user/session state
+- `/prturns`
+  - 查看 turn registry 快照
+- `/prwhy`
+  - 查看最近一轮 PromptPlan、场景、行为概率、模块、learning effects
+- `/prexample last [N] scene=... tags=a,b`
+  - 保存最近 1 轮或 N 轮已提交回复为示例
+- `/prexample tag <id> scene=... tags=a,b`
+  - 修改示例元数据
+- `/prexample disable <id>`
+  - 禁用示例
+- `/prexample delete <id>`
+  - 删除示例
+- `/prexamples`
+  - 列出最近示例
+- `/prlearn`
+  - 手动触发一次学习分析
+- `/prpatches`
+  - 查看已持久化 patch
+- `/preval`
+  - 运行固定评估集
 
-重点事件包括：
+## 关键配置
 
-- `turn_created`
-- `tool_entered`
-- `candidate_write`
-- `final_commit`
-- `watchdog_rollback`
+见 [_conf_schema.json](C:/Users/PC/.astrbot_launcher/instances/091cc1c1-7919-4d7c-8cea-c8c2dfa29f64/core/data/plugins/astrbot_plugin_persona_runtime/_conf_schema.json)。
 
-## 运行 dev_harness.py
+常用项：
 
-先安装运行依赖：
+- `enable_runtime`
+  - 是否启用运行时主链路
+- `DEBUG_MODE`
+  - 是否输出结构化调试日志
+- `commit_timeout_seconds`
+  - 候选提交等待 `after_message_sent` 的超时秒数
+- `max_runtime_chars`
+  - 单轮动态注入字符预算
+- `static_persona_prompt`
+  - 基础人格底盘 prompt
+- `learning_min_batch_size`
+  - 自动批学习触发的最小样本数
+- `deterministic_mode`
+  - 开启后跳过后台自动学习，便于稳定回归
+
+## 数据文件
+
+插件运行后会在 `data/` 下维护：
+
+- `persona_runtime.db`
+  - SQLite 主库
+- `lore_keywords.json`
+  - lore 关键词配置
+
+当前数据库包含这些主要表：
+
+- `user_states`
+- `session_states`
+- `examples`
+- `raw_turns`
+- `turn_traces`
+- `learning_buffer`
+- `weight_patches`
+
+## 调试与验证
+
+安装依赖：
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
-运行全部离线链路：
-
-```bash
-python dev_harness.py
-```
-
-只运行某一条链路：
-
-```bash
-python dev_harness.py --scenario normal
-python dev_harness.py --scenario tool
-python dev_harness.py --scenario timeout
-python dev_harness.py --scenario concurrent
-```
-
-可选链路：
-
-- `normal`: `on_llm_request -> on_llm_response -> after_message_sent`
-- `tool`: `on_llm_request -> on_agent_begin -> on_using_llm_tool -> on_llm_tool_respond -> on_agent_done -> after_message_sent`
-- `timeout`: `on_llm_request -> on_llm_response -> 不触发 after_message_sent -> CommitWatchdog 超时回滚`
-- `concurrent`: 同 session 两个并发 turn、同 user 跨两个 session 并发 turn
-- `all`: 依次运行以上全部链路
-
-`dev_harness.py` 不连接真实平台；它会注入最小 AstrBot mock，并使用临时 SQLite 数据库。插件核心模块、状态仓储、turn registry、watchdog 和提交逻辑仍然走真实代码。
-
-## 运行 tests
-
-使用标准库 unittest：
+运行单元测试：
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-当前测试覆盖：
+运行离线 harness：
 
-- `StateRepository`
-- `ScopeLockManager`
-- `TurnRegistry`
-- `CommitWatchdog`
-- `ToolContextTracker`
+```bash
+python dev_harness.py --scenario all
+```
 
-## 建议上机前验证顺序
+可选场景：
 
-1. 本地运行 `python -m unittest discover -s tests -v`
-2. 本地运行 `python dev_harness.py --scenario all`
+- `normal`
+- `tool`
+- `timeout`
+- `concurrent`
+- `eval`
+- `all`
+
+## 建议验证顺序
+
+1. 运行 `python -m unittest discover -s tests -v`
+2. 运行 `python dev_harness.py --scenario all`
 3. 加载插件后执行 `/prhello`
-4. 执行 `/prstate`
-5. 普通聊天，确认 `on_llm_request` 被触发
-6. 验证动态注入是否污染历史
-7. 验证 `/help` 等命令是否绕过 LLM 链路
-8. 验证工具调用钩子能否绑定到 `turn_id`
-9. 验证 `after_message_sent` 是否稳定触发
+4. 发一条普通对话，随后执行 `/prwhy`
+5. 保存一条示例：`/prexample last`
+6. 触发几轮后执行 `/prlearn`
+7. 查看 patch：`/prpatches`
+8. 执行 `/preval`
 
-## 当前未完成
+## 当前边界
 
-- 更完整的 `StateResolver` 规则
-- 真正的复杂 lore 评分/检索
-- 更细的工具态策略
-- `OutputRefiner`
-- 上机后的平台差异适配
-
-## 注意
-
-- streaming 模式下，starter 目前只记录 `streaming_flag`，不扩展复杂流式后处理。
-- `mood` 只在当前 turn 内现场计算，不进入 `SessionState`。
-- `after_message_sent` 是首选最终提交点；若未触发，则由 `CommitWatchdog` 超时回滚候选态。
-- `_conf_schema.json` 中已移除未使用的 `plugin_priority`，当前没有事件优先级接入逻辑。
+- 学习链仍然是规则批分析，不接专用 classifier/learner 模型
+- 示例选择仍是轻量相似度，不是向量召回
+- 评估集目前是固定 4 条回归样例，主要覆盖核心行为
+- `deterministic_mode` 只关闭后台自动学习；手动 `/prlearn` 仍可执行

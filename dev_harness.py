@@ -42,7 +42,8 @@ def install_astrbot_mock():
             self.system_prompt = system_prompt
 
     class LLMResponse:
-        pass
+        def __init__(self, text: str = ""):
+            self.text = text
 
     class Context:
         pass
@@ -134,20 +135,21 @@ def import_plugin_main():
     return module
 
 
-def build_plugin(work_dir: Path, timeout_seconds: int):
+def build_plugin(work_dir: Path, timeout_seconds: int, extra_config: dict[str, Any] | None = None):
     module = import_plugin_main()
-    config = module.AstrBotConfig(
-        {
-            "enable_runtime": True,
-            "DEBUG_MODE": True,
-            "commit_timeout_seconds": timeout_seconds,
-            "max_runtime_chars": 800,
-            "max_lore_chars": 300,
-            "lore_top_k": 2,
-            "lore_score_threshold": 0.55,
-            "static_persona_prompt": "",
-        }
-    )
+    config_data = {
+        "enable_runtime": True,
+        "DEBUG_MODE": True,
+        "commit_timeout_seconds": timeout_seconds,
+        "max_runtime_chars": 800,
+        "max_lore_chars": 300,
+        "lore_top_k": 2,
+        "lore_score_threshold": 0.55,
+        "static_persona_prompt": "",
+        "deterministic_mode": False,
+    }
+    config_data.update(extra_config or {})
+    config = module.AstrBotConfig(config_data)
     plugin = module.Main(module.Context(), config)
 
     data_dir = work_dir / "data"
@@ -171,7 +173,7 @@ def build_plugin(work_dir: Path, timeout_seconds: int):
 async def normal_turn(plugin: Any, module: Any, event: FakeEvent):
     req = module.ProviderRequest(system_prompt="base system prompt")
     await plugin.on_llm_request(event, req)
-    await plugin.on_llm_response(event, module.LLMResponse())
+    await plugin.on_llm_response(event, module.LLMResponse(text="normal harness reply"))
     await plugin.after_message_sent(event)
     print(f"[normal] injected_system_prompt_len={len(req.system_prompt)}")
 
@@ -183,7 +185,7 @@ async def tool_turn(plugin: Any, module: Any, event: FakeEvent):
     await plugin.on_agent_begin(event, run_context={})
     await plugin.on_using_llm_tool(event, tool, {"query": "dev harness"})
     await plugin.on_llm_tool_respond(event, tool, {"query": "dev harness"}, FakeToolResult(["ok"]))
-    await plugin.on_agent_done(event, run_context={}, resp=module.LLMResponse())
+    await plugin.on_agent_done(event, run_context={}, resp=module.LLMResponse(text="tool harness reply"))
     await plugin.after_message_sent(event)
     print(f"[tool] injected_system_prompt_len={len(req.system_prompt)}")
 
@@ -191,7 +193,7 @@ async def tool_turn(plugin: Any, module: Any, event: FakeEvent):
 async def timeout_turn(plugin: Any, module: Any, event: FakeEvent, timeout_seconds: int):
     req = module.ProviderRequest(system_prompt="")
     await plugin.on_llm_request(event, req)
-    await plugin.on_llm_response(event, module.LLMResponse())
+    await plugin.on_llm_response(event, module.LLMResponse(text="timeout harness reply"))
     await asyncio.sleep(timeout_seconds + 1.5)
     print("[timeout] after_message_sent intentionally skipped")
 
@@ -207,6 +209,15 @@ async def concurrent_turns(plugin: Any, module: Any):
     ]
     await asyncio.gather(*(normal_turn(plugin, module, event) for event in same_session))
     await asyncio.gather(*(normal_turn(plugin, module, event) for event in cross_session))
+
+
+async def eval_turn(plugin: Any, _module: Any):
+    event = FakeEvent(text="/preval", user_id="user-eval", session_id="room-eval")
+    outputs = []
+    async for item in plugin.preval(event):
+        outputs.append(item)
+    print("[eval]")
+    print("\n".join(outputs))
 
 
 async def run_scenario(name: str, timeout_seconds: int):
@@ -234,6 +245,8 @@ async def run_scenario(name: str, timeout_seconds: int):
                 )
             if name in {"concurrent", "all"}:
                 await concurrent_turns(plugin, module)
+            if name in {"eval", "all"}:
+                await eval_turn(plugin, module)
             print("[snapshot]")
             print(plugin.turn_registry.snapshot())
         finally:
@@ -244,7 +257,7 @@ def main():
     parser = argparse.ArgumentParser(description="Offline lifecycle harness for astrbot_plugin_persona_runtime.")
     parser.add_argument(
         "--scenario",
-        choices=["normal", "tool", "timeout", "concurrent", "all"],
+        choices=["normal", "tool", "timeout", "concurrent", "eval", "all"],
         default="all",
         help="Lifecycle scenario to run.",
     )

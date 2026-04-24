@@ -46,6 +46,20 @@ class TurnRegistry:
     def get(self, turn_id: str) -> TurnRecord | None:
         return self._turns.get(turn_id)
 
+    def list_recent_turns(self, origin: str, *, include_finished: bool = True, limit: int = 10) -> list[TurnRecord]:
+        turn_ids = self._turns_by_origin.get(origin, [])
+        turns: list[TurnRecord] = []
+        for turn_id in reversed(turn_ids):
+            turn = self._turns.get(turn_id)
+            if turn is None:
+                continue
+            if not include_finished and (turn.final_committed or turn.aborted):
+                continue
+            turns.append(turn)
+            if len(turns) >= limit:
+                break
+        return turns
+
     def mark_candidate(self, turn_id: str, stage: str):
         turn = self._turns.get(turn_id)
         if turn:
